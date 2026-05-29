@@ -21,3 +21,4 @@ Last updated: 2026-02-17
 - No DB-backed schema docs
 - Uses AI agents
 - Does not use RAG KB currently
+- 
