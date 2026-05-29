@@ -110,6 +110,7 @@ class IdalibManager:
         host: str = "127.0.0.1",
         timeout: int = _READY_TIMEOUT,
         unsafe: bool = False,
+        ida_args: str | None = None,
     ) -> dict:
         """Spawn a headless idalib worker for *input_path*.
 
@@ -139,6 +140,11 @@ class IdalibManager:
         ]
         if unsafe:
             cmd.append("--unsafe")
+        if ida_args:
+            # Use --opt=value form because IDA args commonly start with '-'
+            # (for example -pARM), which argparse would otherwise parse as
+            # another worker option.
+            cmd.append(f"--ida-args={ida_args}")
         cmd.append(resolved_path)
 
         creation_flags = 0

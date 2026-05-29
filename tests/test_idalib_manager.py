@@ -80,6 +80,26 @@ class TestIdalibManagerSpawn:
         assert info is not None
         assert info["type"] == "idalib"
 
+    @patch("ida_multi_mcp.idalib_manager.subprocess.Popen")
+    @patch("ida_multi_mcp.idalib_manager.ping_instance")
+    def test_spawn_passes_ida_args_to_worker(self, mock_ping, mock_popen, tmp_path, tmp_registry):
+        binary = tmp_path / "raw.bin"
+        binary.write_bytes(b"\x00" * 16)
+
+        mock_proc = MagicMock()
+        mock_proc.pid = 99999
+        mock_proc.poll.return_value = None
+        mock_popen.return_value = mock_proc
+        mock_ping.return_value = True
+
+        mgr = IdalibManager(tmp_registry)
+        result = mgr.spawn_session(str(binary), ida_args="-pARM")
+
+        assert "error" not in result
+        cmd = mock_popen.call_args.args[0]
+        assert "--ida-args=-pARM" in cmd
+        assert cmd[-1] == str(binary.resolve())
+
     @patch("ida_multi_mcp.idalib_manager.query_binary_metadata",
            return_value={"module": "test.exe", "path": "/tmp/test.exe.i64"})
     @patch("ida_multi_mcp.idalib_manager.subprocess.Popen")

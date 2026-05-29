@@ -252,6 +252,23 @@ Set `IDA_MULTI_MCP_AUTO_START_BROKER=0` to disable this behavior. The relevant
 code paths are `src/ida_multi_mcp/plugin/ida_multi_mcp.py`,
 `src/ida_multi_mcp/__main__.py`, and `src/ida_multi_mcp/server.py`.
 
+### Headless raw binary processor arguments
+
+For IDA 9.3+ idalib, `idalib_open` supports `ida_args`, which is passed through
+to `idapro.open_database(..., args=...)`. Use it for raw binaries that need a
+processor selected explicitly:
+
+```json
+{
+  "input_path": "E:\\libDump\\12\\dfm10\\5\\dfm_plus_dump.bin",
+  "ida_args": "-pARM"
+}
+```
+
+For ARM64 raw dumps, IDA still uses the `ARM` processor module; `-pARM` or
+`-pARM:ARMv8-A` can load the sample as ARM 64-bit, while `-pARM64` is not a
+valid processor name in the tested IDA 9.3 installation.
+
 ## Auto-Remediation Playbook
 
 If post-flight checks fail, apply fixes in order.

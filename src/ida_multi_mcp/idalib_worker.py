@@ -15,6 +15,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import inspect
 import logging
 import signal
 import sys
@@ -31,6 +32,12 @@ def main() -> None:
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--unsafe", action="store_true",
                         help="Enable unsafe / destructive tools")
+    parser.add_argument(
+        "--ida-args",
+        type=str,
+        default=None,
+        help="Raw IDA command-line arguments passed to idapro.open_database",
+    )
     parser.add_argument("--verbose", "-v", action="store_true")
     parser.add_argument("input_path", type=Path, help="Binary or IDB to open")
 
@@ -67,10 +74,24 @@ def main() -> None:
 
     resolved = str(args.input_path.resolve())
     logger.info("Opening database: %s", resolved)
+    if args.ida_args:
+        logger.info("Using IDA open_database args: %s", args.ida_args)
 
     # idapro.open_database opens (or creates) an IDB for the given binary.
     try:
-        idapro.open_database(resolved, run_auto_analysis=True)
+        kwargs = {"run_auto_analysis": True}
+        if args.ida_args:
+            try:
+                supports_args = "args" in inspect.signature(idapro.open_database).parameters
+            except (TypeError, ValueError):
+                supports_args = False
+            if not supports_args:
+                raise RuntimeError(
+                    "This idapro.open_database() does not support the 'args' parameter. "
+                    "Use IDA 9.3+ or open the raw binary in GUI IDA."
+                )
+            kwargs["args"] = args.ida_args
+        idapro.open_database(resolved, **kwargs)
     except Exception as exc:
         logger.error("Failed to open database: %s", exc)
         sys.exit(1)

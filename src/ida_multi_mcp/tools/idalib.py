@@ -39,6 +39,7 @@ def idalib_open(arguments: dict) -> dict:
     Optional args:
         timeout (int): Seconds to wait for analysis (default 120).
         unsafe (bool): Enable unsafe tools (default false).
+        ida_args (str): Raw IDA command-line arguments passed to idapro.open_database.
     """
     mgr = _get_manager()
     input_path = arguments.get("input_path", "")
@@ -46,7 +47,10 @@ def idalib_open(arguments: dict) -> dict:
         return {"error": "Missing required argument 'input_path'"}
     timeout = int(arguments.get("timeout", 120))
     unsafe = bool(arguments.get("unsafe", False))
-    return mgr.spawn_session(input_path, timeout=timeout, unsafe=unsafe)
+    ida_args = arguments.get("ida_args")
+    if ida_args is not None and not isinstance(ida_args, str):
+        return {"error": "ida_args must be a string when provided"}
+    return mgr.spawn_session(input_path, timeout=timeout, unsafe=unsafe, ida_args=ida_args)
 
 
 def idalib_close(arguments: dict) -> dict:
@@ -110,6 +114,14 @@ IDALIB_TOOL_SCHEMAS: list[dict] = [
                 "unsafe": {
                     "type": "boolean",
                     "description": "Enable unsafe/destructive tools (default false)",
+                },
+                "ida_args": {
+                    "type": "string",
+                    "description": (
+                        "Raw IDA command-line arguments passed to idapro.open_database. "
+                        "Useful for raw binaries, e.g. '-pARM' or '-pARM:ARMv8-A'. "
+                        "Requires IDA/idapro support for open_database(args=...)."
+                    ),
                 },
             },
             "required": ["input_path"],
