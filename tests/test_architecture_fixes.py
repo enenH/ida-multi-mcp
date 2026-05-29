@@ -141,6 +141,31 @@ class TestArchitectureFixes(unittest.TestCase):
             self.assertGreater(loader.stat().st_size, 0)
             self.assertIn("IDA plugin loader for ida-multi-mcp", loader.read_text(encoding="utf-8"))
 
+    def test_cmd_install_disables_legacy_ida_pro_mcp_plugins(self):
+        from ida_multi_mcp import __main__ as cli
+
+        with tempfile.TemporaryDirectory() as td:
+            plugins_dir = Path(td) / "plugins"
+            plugins_dir.mkdir()
+            (plugins_dir / "ida_mcp.py").write_text("# old loader", encoding="utf-8")
+            (plugins_dir / "ida_mcp").mkdir()
+            (plugins_dir / "broker").mkdir()
+            args = type("Args", (), {"ida_dir": None})()
+
+            with mock.patch.object(cli, "_get_ida_plugins_dir", return_value=plugins_dir), \
+                 mock.patch.object(cli, "_configure_idalib_path"), \
+                 mock.patch.object(cli, "install_mcp_servers"):
+                rc = cli.cmd_install(args)
+
+            self.assertEqual(rc, 0)
+            self.assertFalse((plugins_dir / "ida_mcp.py").exists())
+            self.assertFalse((plugins_dir / "ida_mcp").exists())
+            # Plain directories named "broker" are not enough to identify the
+            # old install. This avoids disabling unrelated plugins.
+            self.assertTrue((plugins_dir / "broker").exists())
+            self.assertTrue(list(plugins_dir.glob("ida_mcp.py.disabled-*")))
+            self.assertTrue(list(plugins_dir.glob("ida_mcp.disabled-*")))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -916,6 +916,45 @@ def _get_ida_plugins_dir(custom_dir=None):
         return Path.home() / ".idapro" / "plugins"
 
 
+def _path_points_to_legacy_ida_pro_mcp(path: Path) -> bool:
+    """Return True when a plugin path is the old ida-pro-mcp install."""
+    if path.name in {"ida_mcp.py", "ida_mcp"}:
+        return True
+    if path.name != "broker":
+        return False
+    try:
+        target = path.resolve()
+    except OSError:
+        return False
+    return "ida_pro_mcp" in str(target).replace("\\", "/")
+
+
+def _disable_legacy_ida_pro_mcp_plugins(ida_plugins_dir: Path) -> list[tuple[Path, Path]]:
+    """Rename old ida-pro-mcp plugin entries so IDA does not load both plugins.
+
+    The old HTTP+SSE plugin uses ``/register`` on port 13337. If it remains in
+    the IDA plugin directory alongside ida-multi-mcp, it can connect to the new
+    HTTP broker and fail with 404. Renaming keeps a reversible backup.
+    """
+    disabled: list[tuple[Path, Path]] = []
+    stamp = time.strftime("%Y%m%d%H%M%S")
+    for name in ("ida_mcp.py", "ida_mcp", "broker"):
+        legacy = ida_plugins_dir / name
+        if not (legacy.exists() or legacy.is_symlink()):
+            continue
+        if not _path_points_to_legacy_ida_pro_mcp(legacy):
+            continue
+
+        candidate = ida_plugins_dir / f"{name}.disabled-{stamp}"
+        index = 1
+        while candidate.exists() or candidate.is_symlink():
+            candidate = ida_plugins_dir / f"{name}.disabled-{stamp}-{index}"
+            index += 1
+        legacy.rename(candidate)
+        disabled.append((legacy, candidate))
+    return disabled
+
+
 def _configure_idalib_path():
     """Auto-detect IDA installation and write to ida-config.json.
 
@@ -987,6 +1026,10 @@ def cmd_install(args):
     if not ida_plugins_dir.exists():
         print(f"\n  Creating IDA plugins directory: {ida_plugins_dir}")
         ida_plugins_dir.mkdir(parents=True, exist_ok=True)
+
+    disabled_legacy = _disable_legacy_ida_pro_mcp_plugins(ida_plugins_dir)
+    for old_path, new_path in disabled_legacy:
+        print(f"\n  Disabled legacy ida-pro-mcp plugin: {old_path.name} -> {new_path.name}")
 
     # Copy the loader file as ida_multi_mcp.py into IDA's plugins directory
     loader_source = Path(__file__).parent / "plugin" / "ida_multi_mcp_loader.py"

@@ -302,8 +302,11 @@ If the loader prints `Searched paths:`, check if any of those paths contain `ida
 ## Coexistence with ida-pro-mcp
 
 If you previously used ida-pro-mcp, note that ida-multi-mcp now bundles all IDA tools internally.
-You can remove the original `ida_mcp.py` from the IDA plugins directory to avoid conflicts.
-Both can run simultaneously (they bind to different ports), but it's recommended to use only ida-multi-mcp.
+`ida-multi-mcp --install` disables legacy `ida_mcp.py`, `ida_mcp`, and the
+legacy `broker` symlink by renaming them to `*.disabled-<timestamp>` in the IDA
+plugins directory. This prevents the old plugin from connecting to
+`127.0.0.1:13337/register` while ida-multi-mcp is using its MCP broker on
+`/mcp`.
 
 ## Uninstallation
 
