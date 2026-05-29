@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 import shutil
 
-from .server import serve
+from .server import serve, serve_broker
 from .registry import InstanceRegistry
 
 SERVER_NAME = "ida-multi-mcp"
@@ -1124,6 +1124,18 @@ def main():
         help="Python executable with idapro installed (for headless idalib sessions). "
              "Defaults to the same Python running this server."
     )
+    parser.add_argument(
+        "--broker", action="store_true",
+        help="Start the localhost HTTP broker instead of stdio"
+    )
+    parser.add_argument(
+        "--host", type=str, default="127.0.0.1",
+        help="Broker bind host for --broker (default: 127.0.0.1)"
+    )
+    parser.add_argument(
+        "--port", type=int, default=13337,
+        help="Broker HTTP port for --broker (default: 13337)"
+    )
 
     args = parser.parse_args()
 
@@ -1136,6 +1148,13 @@ def main():
         return
     elif args.config:
         sys.exit(cmd_config(args))
+    elif args.broker:
+        serve_broker(
+            registry_path=args.registry,
+            idalib_python=args.idalib_python,
+            host=args.host,
+            port=args.port,
+        )
     else:
         # Default: start MCP server
         serve(registry_path=args.registry, idalib_python=args.idalib_python)

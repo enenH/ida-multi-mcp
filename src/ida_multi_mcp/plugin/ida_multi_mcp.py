@@ -8,9 +8,13 @@ The ida_mcp package is bundled with ida-multi-mcp and provides all IDA tools.
 """
 
 import os
+import socket
+import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 import idaapi
 import ida_kernwin
@@ -26,6 +30,17 @@ from ida_multi_mcp.plugin.registration import (
     update_heartbeat,
     get_binary_metadata,
 )
+
+DEFAULT_BROKER_URL = "http://127.0.0.1:13337"
+AUTO_START_BROKER = os.environ.get("IDA_MULTI_MCP_AUTO_START_BROKER", "1").lower() not in {
+    "0",
+    "false",
+    "no",
+    "off",
+}
+BROKER_STARTUP_TIMEOUT = 12.0
+_broker_start_lock = threading.Lock()
+_broker_process: subprocess.Popen | None = None
 
 
 def _is_gui_runtime() -> bool:
@@ -50,6 +65,160 @@ def _load_ida_mcp():
     """
     from ida_multi_mcp.ida_mcp import MCP_SERVER, IdaMcpHttpRequestHandler, init_caches
     return MCP_SERVER, IdaMcpHttpRequestHandler, init_caches
+
+
+def _broker_host_port(broker_url: str) -> tuple[str, int]:
+    parsed = urlparse(broker_url)
+    host = parsed.hostname or "127.0.0.1"
+    if parsed.port:
+        port = parsed.port
+    elif parsed.scheme == "https":
+        port = 443
+    else:
+        port = 80
+    return host, port
+
+
+def _is_local_host(host: str) -> bool:
+    return host.lower() in {"127.0.0.1", "localhost", "::1"}
+
+
+def _is_port_open(host: str, port: int, timeout: float = 0.5) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _find_external_python() -> str | None:
+    env_python = os.environ.get("IDA_MULTI_MCP_PYTHON") or os.environ.get("IDA_MCP_PYTHON")
+    if env_python and os.path.exists(env_python):
+        return env_python
+
+    exe_name = os.path.basename(sys.executable).lower()
+    if exe_name.startswith("python") and os.path.exists(sys.executable):
+        return sys.executable
+
+    candidates: list[Path] = []
+    package_root = Path(__file__).resolve().parents[2]
+    for parent in package_root.parents:
+        candidates.extend([parent / "python.exe", parent / "pythonw.exe"])
+        candidates.extend([parent / "bin" / "python3", parent / "bin" / "python"])
+
+    if sys.platform == "win32":
+        local_appdata = os.environ.get("LOCALAPPDATA", "")
+        if local_appdata:
+            candidates.extend(
+                Path(local_appdata).glob("Programs/Python/Python*/python.exe")
+            )
+
+    for candidate in candidates:
+        try:
+            if candidate.exists():
+                return str(candidate)
+        except OSError:
+            continue
+    return None
+
+
+def _broker_log_paths() -> tuple[str, str]:
+    base_dir = (
+        os.environ.get("IDA_MULTI_MCP_LOG_DIR")
+        or os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "ida-multi-mcp", "logs")
+    )
+    os.makedirs(base_dir, exist_ok=True)
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    return (
+        os.path.join(base_dir, f"ida-multi-mcp-broker-{stamp}.out.log"),
+        os.path.join(base_dir, f"ida-multi-mcp-broker-{stamp}.err.log"),
+    )
+
+
+def _ensure_broker_running(broker_url: str | None = None, silent: bool = False) -> bool:
+    """Start the localhost HTTP broker if it is not already listening."""
+    if not AUTO_START_BROKER:
+        return False
+
+    broker_url = broker_url or os.environ.get("IDA_MULTI_MCP_BROKER_URL", DEFAULT_BROKER_URL)
+    try:
+        host, port = _broker_host_port(broker_url)
+    except Exception as exc:
+        if not silent:
+            print(f"[ida-multi-mcp] Broker URL parse failed: {exc}")
+        return False
+
+    if not _is_local_host(host):
+        return False
+
+    if _is_port_open(host, port):
+        return True
+
+    with _broker_start_lock:
+        if _is_port_open(host, port):
+            return True
+
+        python_path = _find_external_python()
+        if not python_path:
+            if not silent:
+                print("[ida-multi-mcp] Broker is not running and no external Python was found")
+            return False
+
+        stdout_log, stderr_log = _broker_log_paths()
+        stdout_file = open(stdout_log, "ab")
+        stderr_file = open(stderr_log, "ab")
+        args = [
+            python_path,
+            "-m",
+            "ida_multi_mcp",
+            "--broker",
+            "--host",
+            host,
+            "--port",
+            str(port),
+        ]
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
+        child_env = os.environ.copy()
+        package_parent = str(Path(__file__).resolve().parents[2])
+        existing_pythonpath = child_env.get("PYTHONPATH", "")
+        if package_parent not in existing_pythonpath.split(os.pathsep):
+            child_env["PYTHONPATH"] = (
+                package_parent
+                if not existing_pythonpath
+                else package_parent + os.pathsep + existing_pythonpath
+            )
+
+        try:
+            global _broker_process
+            _broker_process = subprocess.Popen(
+                args,
+                stdout=stdout_file,
+                stderr=stderr_file,
+                stdin=subprocess.DEVNULL,
+                creationflags=creationflags,
+                env=child_env,
+            )
+        except Exception as exc:
+            if not silent:
+                print(f"[ida-multi-mcp] Broker auto-start failed: {exc}")
+            return False
+        finally:
+            stdout_file.close()
+            stderr_file.close()
+
+        if not silent:
+            print(f"[ida-multi-mcp] Broker auto-started: http://{host}:{port}")
+            print(f"[ida-multi-mcp] Broker log: {stderr_log}")
+
+    deadline = time.time() + BROKER_STARTUP_TIMEOUT
+    while time.time() < deadline:
+        if _is_port_open(host, port):
+            return True
+        time.sleep(0.25)
+
+    if not silent:
+        print(f"[ida-multi-mcp] Broker did not listen on {host}:{port} after auto-start")
+    return False
 
 
 class IdaMultiMcpPlugin(idaapi.plugin_t):
@@ -105,6 +274,7 @@ class IdaMultiMcpPlugin(idaapi.plugin_t):
             return
 
         print("[ida-multi-mcp] Starting MCP server...")
+        _ensure_broker_running(silent=True)
 
         # Get binary metadata for registration
         metadata = get_binary_metadata()

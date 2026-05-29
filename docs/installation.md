@@ -2,7 +2,7 @@
 
 This guide is for AI agents. Follow each step exactly.
 
-Last updated: 2026-02-17
+Last updated: 2026-05-29
 Governance reference: `docs/README.md`
 Authority note: this document is operational guidance and must not redefine contracts.
 
@@ -236,6 +236,21 @@ Required calls:
 
 Pass criteria:
 - both calls succeed without transport/protocol errors
+
+### Optional localhost broker
+
+`ida-multi-mcp` can also run a localhost HTTP broker for tools that expect a
+broker port:
+
+```bash
+ida-multi-mcp --broker --port 13337
+```
+
+The IDA GUI plugin auto-checks `IDA_MULTI_MCP_BROKER_URL` (default
+`http://127.0.0.1:13337`) and starts the broker if the port is not listening.
+Set `IDA_MULTI_MCP_AUTO_START_BROKER=0` to disable this behavior. The relevant
+code paths are `src/ida_multi_mcp/plugin/ida_multi_mcp.py`,
+`src/ida_multi_mcp/__main__.py`, and `src/ida_multi_mcp/server.py`.
 
 ## Auto-Remediation Playbook
 

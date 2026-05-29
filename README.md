@@ -345,6 +345,14 @@ ida-multi-mcp
 ida-multi-mcp --idalib-python /path/to/python3  # custom Python for headless sessions
 ```
 
+### `ida-multi-mcp --broker [--port PORT]`
+Start the localhost HTTP broker. The IDA GUI plugin auto-starts this broker on
+`127.0.0.1:13337` when `IDA_MULTI_MCP_AUTO_START_BROKER` is enabled (default).
+
+```bash
+ida-multi-mcp --broker --port 13337
+```
+
 ### `ida-multi-mcp --list`
 List all registered IDA instances.
 

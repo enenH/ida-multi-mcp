@@ -823,6 +823,34 @@ class IdaMultiMcpServer:
         # Run server with stdio transport (idalib cleanup via atexit in IdalibManager)
         self.server.stdio()
 
+    def run_http(self, host: str = "127.0.0.1", port: int = 13337):
+        """Run the MCP broker with HTTP transport.
+
+        This exposes the same router and management tool surface as stdio, but
+        keeps it reachable on a localhost port for clients or IDA-side bootstrap
+        flows that expect a broker process.
+        """
+        removed = cleanup_stale_instances(self.registry)
+        if removed:
+            print(f"[ida-multi-mcp] Cleaned up {len(removed)} dead instances on startup",
+                  file=sys.stderr)
+
+        if not self.registry.list_instances():
+            discovered = rediscover_instances(self.registry)
+            if discovered:
+                print(f"[ida-multi-mcp] Auto-discovered {len(discovered)} IDA instance(s)",
+                      file=sys.stderr)
+            else:
+                print("[ida-multi-mcp] No IDA instances found (start IDA with MCP plugin first)",
+                      file=sys.stderr)
+
+        self._refresh_tools()
+        print(
+            f"[ida-multi-mcp] Broker starting on {host}:{port} with {len(self._tool_cache)} tools",
+            file=sys.stderr,
+        )
+        self.server.serve(host=host, port=port, background=False)
+
 
 def serve(registry_path: str | None = None, idalib_python: str | None = None):
     """Start the ida-multi-mcp server.
@@ -833,3 +861,14 @@ def serve(registry_path: str | None = None, idalib_python: str | None = None):
     """
     server = IdaMultiMcpServer(registry_path, idalib_python=idalib_python)
     server.run()
+
+
+def serve_broker(
+    registry_path: str | None = None,
+    idalib_python: str | None = None,
+    host: str = "127.0.0.1",
+    port: int = 13337,
+):
+    """Start the ida-multi-mcp HTTP broker."""
+    server = IdaMultiMcpServer(registry_path, idalib_python=idalib_python)
+    server.run_http(host=host, port=port)

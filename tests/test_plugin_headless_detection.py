@@ -96,3 +96,57 @@ def test_database_inited_skips_in_headless(monkeypatch):
 
     assert rc == 0
     plugin.start_server.assert_not_called()
+
+
+def test_broker_url_defaults_to_13337(monkeypatch):
+    module = _load_plugin_module(monkeypatch, is_idaq=True)
+
+    assert module._broker_host_port("http://127.0.0.1:13337") == ("127.0.0.1", 13337)
+    assert module._broker_host_port("http://localhost") == ("localhost", 80)
+
+
+def test_broker_auto_start_skips_when_disabled(monkeypatch):
+    module = _load_plugin_module(monkeypatch, is_idaq=True)
+    monkeypatch.setattr(module, "AUTO_START_BROKER", False)
+    popen = MagicMock()
+    monkeypatch.setattr(module.subprocess, "Popen", popen)
+
+    assert module._ensure_broker_running("http://127.0.0.1:13337", silent=True) is False
+    popen.assert_not_called()
+
+
+def test_broker_auto_start_skips_when_port_open(monkeypatch):
+    module = _load_plugin_module(monkeypatch, is_idaq=True)
+    monkeypatch.setattr(module, "AUTO_START_BROKER", True)
+    monkeypatch.setattr(module, "_is_port_open", lambda host, port: True)
+    popen = MagicMock()
+    monkeypatch.setattr(module.subprocess, "Popen", popen)
+
+    assert module._ensure_broker_running("http://127.0.0.1:13337", silent=True) is True
+    popen.assert_not_called()
+
+
+def test_broker_auto_start_launches_module(monkeypatch, tmp_path):
+    module = _load_plugin_module(monkeypatch, is_idaq=True)
+    python = tmp_path / "python.exe"
+    python.write_text("", encoding="utf-8")
+    monkeypatch.setattr(module, "AUTO_START_BROKER", True)
+    monkeypatch.setattr(module, "BROKER_STARTUP_TIMEOUT", 0.01)
+    monkeypatch.setattr(module, "_find_external_python", lambda: str(python))
+    monkeypatch.setattr(
+        module,
+        "_broker_log_paths",
+        lambda: (str(tmp_path / "out.log"), str(tmp_path / "err.log")),
+    )
+
+    checks = iter([False, False, True])
+    monkeypatch.setattr(module, "_is_port_open", lambda host, port: next(checks, True))
+    popen = MagicMock()
+    monkeypatch.setattr(module.subprocess, "Popen", popen)
+
+    assert module._ensure_broker_running("http://127.0.0.1:13337", silent=True) is True
+    args = popen.call_args.args[0]
+    assert args[:3] == [str(python), "-m", "ida_multi_mcp"]
+    assert "--broker" in args
+    assert "13337" in args
+    assert "PYTHONPATH" in popen.call_args.kwargs["env"]
