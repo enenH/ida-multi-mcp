@@ -992,30 +992,22 @@ def cmd_install(args):
     loader_source = Path(__file__).parent / "plugin" / "ida_multi_mcp_loader.py"
     loader_dest = ida_plugins_dir / "ida_multi_mcp.py"
 
-    # Try symlink first (development-friendly), fall back to copy
-    # Use a temporary name + rename to avoid TOCTOU race between unlink/symlink
+    # Install a real loader file by default. IDA and PowerShell can report
+    # symlinked plugin loaders as zero-byte files, which makes normal install
+    # verification ambiguous after pip installs from git.
     import tempfile
     loader_tmp = None
     try:
-        # Create symlink/copy at a temp path in the same directory, then atomically rename
+        # Create the loader at a temp path in the same directory, then atomically rename.
         tmp_fd, loader_tmp = tempfile.mkstemp(
             prefix=".ida_multi_mcp_", suffix=".tmp",
             dir=str(ida_plugins_dir),
         )
         os.close(tmp_fd)
-        os.unlink(loader_tmp)  # Remove the temp file so we can create symlink at this path
-
-        try:
-            Path(loader_tmp).symlink_to(loader_source)
-            os.replace(loader_tmp, str(loader_dest))
-            loader_tmp = None  # Successfully replaced, no cleanup needed
-            print(f"\n  Symlinked plugin: {loader_dest} -> {loader_source}")
-        except (OSError, NotImplementedError):
-            # Symlink failed, fall back to copy + rename
-            shutil.copy2(loader_source, loader_tmp)
-            os.replace(loader_tmp, str(loader_dest))
-            loader_tmp = None
-            print(f"\n  Copied plugin to: {loader_dest}")
+        shutil.copy2(loader_source, loader_tmp)
+        os.replace(loader_tmp, str(loader_dest))
+        loader_tmp = None
+        print(f"\n  Copied plugin to: {loader_dest}")
     finally:
         if loader_tmp is not None:
             try:

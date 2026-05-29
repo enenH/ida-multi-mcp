@@ -122,6 +122,25 @@ class TestArchitectureFixes(unittest.TestCase):
 
         self.assertEqual(rc, 1)
 
+    def test_cmd_install_copies_real_loader_file(self):
+        from ida_multi_mcp import __main__ as cli
+
+        with tempfile.TemporaryDirectory() as td:
+            plugins_dir = Path(td) / "plugins"
+            args = type("Args", (), {"ida_dir": None})()
+
+            with mock.patch.object(cli, "_get_ida_plugins_dir", return_value=plugins_dir), \
+                 mock.patch.object(cli, "_configure_idalib_path"), \
+                 mock.patch.object(cli, "install_mcp_servers"):
+                rc = cli.cmd_install(args)
+
+            loader = plugins_dir / "ida_multi_mcp.py"
+            self.assertEqual(rc, 0)
+            self.assertTrue(loader.exists())
+            self.assertFalse(loader.is_symlink())
+            self.assertGreater(loader.stat().st_size, 0)
+            self.assertIn("IDA plugin loader for ida-multi-mcp", loader.read_text(encoding="utf-8"))
+
 
 if __name__ == "__main__":
     unittest.main()
