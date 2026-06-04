@@ -652,6 +652,154 @@ def find_bytes(
 # ============================================================================
 
 
+def _block_last_insn_ea(block) -> int:
+    ea = ida_bytes.prev_head(block.end_ea, block.start_ea)
+    if ea == idaapi.BADADDR or ea < block.start_ea:
+        return idaapi.BADADDR
+    return ea
+
+
+def _insn_text(ea: int) -> str:
+    line = ida_lines.generate_disasm_line(ea, 0)
+    return compact_whitespace(ida_lines.tag_remove(line) if line else "")
+
+
+def _block_last_instruction(block) -> dict | None:
+    ea = _block_last_insn_ea(block)
+    if ea == idaapi.BADADDR:
+        return None
+    return {
+        "ea": hex(ea),
+        "mnemonic": idc.print_insn_mnem(ea) or "",
+        "text": _insn_text(ea),
+    }
+
+
+def _block_instruction_count(block) -> int:
+    count = 0
+    ea = block.start_ea
+    while ea != idaapi.BADADDR and ea < block.end_ea:
+        count += 1
+        next_ea = ida_bytes.next_head(ea, block.end_ea)
+        if next_ea == idaapi.BADADDR or next_ea <= ea:
+            break
+        ea = next_ea
+    return count
+
+
+def _flow_mnemonic_kind(mnemonic: str) -> str | None:
+    mn = mnemonic.upper()
+    if mn.startswith("B."):
+        return "conditional_branch"
+    if mn in ("CBZ", "CBNZ", "TBZ", "TBNZ"):
+        return "conditional_branch"
+    if mn in ("B", "BR", "BL", "BLR"):
+        return "branch"
+    if mn in ("RET", "ERET", "DRPS"):
+        return "return"
+    return None
+
+
+def _block_edge_summary(source, target) -> dict:
+    last = _block_last_insn_ea(source)
+    mnemonic = idc.print_insn_mnem(last) if last != idaapi.BADADDR else ""
+    kind = _flow_mnemonic_kind(mnemonic)
+    branch_target = (
+        idc.get_operand_value(last, 0) if last != idaapi.BADADDR and kind else idaapi.BADADDR
+    )
+
+    if kind in ("branch", "conditional_branch") and branch_target == target.start_ea:
+        edge_type = kind
+    elif source.end_ea == target.start_ea:
+        edge_type = "fallthrough"
+    elif kind == "return":
+        edge_type = "return"
+    elif kind is not None:
+        edge_type = kind
+    else:
+        edge_type = "flow"
+
+    return {
+        "source": hex(source.start_ea),
+        "target": hex(target.start_ea),
+        "type": edge_type,
+        "insn": (
+            {
+                "ea": hex(last),
+                "mnemonic": mnemonic or "",
+                "text": _insn_text(last),
+            }
+            if last != idaapi.BADADDR
+            else None
+        ),
+    }
+
+
+def _xrefs_to_block_start(ea: int, limit: int = 32) -> list[dict]:
+    refs = []
+    for xref in islice(idautils.XrefsTo(ea), limit):
+        is_code_attr = getattr(xref, "iscode", False)
+        is_code = is_code_attr() if callable(is_code_attr) else bool(is_code_attr)
+        refs.append(
+            {
+                "from": hex(xref.frm),
+                "to": hex(xref.to),
+                "type": int(xref.type),
+                "is_code": is_code,
+                "insn": _insn_text(xref.frm) if idaapi.is_loaded(xref.frm) else None,
+            }
+        )
+    return refs
+
+
+def _block_containing(blocks: list, ea: int):
+    for block in blocks:
+        if block.start_ea <= ea < block.end_ea:
+            return block
+    return None
+
+
+def _reachable_block_starts(func) -> tuple[set[int], list]:
+    blocks = list(idaapi.FlowChart(func))
+    start_block = _block_containing(blocks, func.start_ea)
+    if start_block is None and blocks:
+        start_block = blocks[0]
+
+    seen = set()
+    queue = [start_block] if start_block is not None else []
+    while queue:
+        block = queue.pop(0)
+        if block is None or block.start_ea in seen:
+            continue
+        seen.add(block.start_ea)
+        for succ in block.succs():
+            if succ.start_ea not in seen:
+                queue.append(succ)
+    return seen, blocks
+
+
+def _branch_refs_to_target(func, target: int) -> list[dict]:
+    refs = []
+    for xref in idautils.XrefsTo(target):
+        if not (func.start_ea <= xref.frm < func.end_ea):
+            continue
+        mnemonic = idc.print_insn_mnem(xref.frm) or ""
+        if _flow_mnemonic_kind(mnemonic) not in ("branch", "conditional_branch"):
+            continue
+        if idc.get_operand_value(xref.frm, 0) != target:
+            continue
+        refs.append(
+            {
+                "from": hex(xref.frm),
+                "to": hex(target),
+                "type": int(xref.type),
+                "mnemonic": mnemonic,
+                "insn": _insn_text(xref.frm),
+            }
+        )
+    return refs
+
+
 @tool
 @idasync
 def basic_blocks(
@@ -688,14 +836,25 @@ def basic_blocks(
             all_blocks = []
 
             for block in flowchart:
+                succs = list(block.succs())
+                preds = list(block.preds())
                 all_blocks.append(
                     BasicBlock(
                         start=hex(block.start_ea),
                         end=hex(block.end_ea),
                         size=block.end_ea - block.start_ea,
                         type=block.type,
-                        successors=[hex(succ.start_ea) for succ in block.succs()],
-                        predecessors=[hex(pred.start_ea) for pred in block.preds()],
+                        successors=[hex(succ.start_ea) for succ in succs],
+                        predecessors=[hex(pred.start_ea) for pred in preds],
+                        successor_edges=[
+                            _block_edge_summary(block, succ) for succ in succs
+                        ],
+                        predecessor_edges=[
+                            _block_edge_summary(pred, block) for pred in preds
+                        ],
+                        last_instruction=_block_last_instruction(block),
+                        instruction_count=_block_instruction_count(block),
+                        xrefs_to_start=_xrefs_to_block_start(block.start_ea),
                     )
                 )
 
@@ -726,6 +885,85 @@ def basic_blocks(
                 }
             )
     return results
+
+
+@tool
+@idasync
+def cfg_verify(
+    func_ea: Annotated[str, "Function address to verify"],
+    expected_blocks: Annotated[
+        Optional[list[str]], "Block starts or addresses that must remain reachable"
+    ] = None,
+    forbidden_branch_targets: Annotated[
+        Optional[list[str]], "Branch targets that must have no remaining code branch refs"
+    ] = None,
+) -> dict:
+    """Verify CFG reachability and forbidden branch references for a function"""
+    try:
+        ea = parse_address(func_ea)
+        func = idaapi.get_func(ea)
+        if not func:
+            return {
+                "func_ea": func_ea,
+                "ok": False,
+                "error": "Function not found",
+            }
+
+        reachable, blocks = _reachable_block_starts(func)
+        all_block_starts = {block.start_ea for block in blocks}
+        unreachable = sorted(all_block_starts - reachable)
+
+        expected_input = expected_blocks or []
+        expected = [parse_address(addr) for addr in expected_input]
+        lost = []
+        expected_map = []
+        for expected_ea in expected:
+            block = _block_containing(blocks, expected_ea)
+            reachable_ok = block is not None and block.start_ea in reachable
+            item = {
+                "addr": hex(expected_ea),
+                "block": hex(block.start_ea) if block else None,
+                "reachable": reachable_ok,
+            }
+            expected_map.append(item)
+            if not reachable_ok:
+                lost.append(item)
+
+        forbidden_input = forbidden_branch_targets or []
+        forbidden_refs = []
+        for target_text in forbidden_input:
+            target = parse_address(target_text)
+            refs = _branch_refs_to_target(func, target)
+            forbidden_refs.append(
+                {
+                    "target": hex(target),
+                    "refs": refs,
+                    "count": len(refs),
+                }
+            )
+
+        return {
+            "func_ea": hex(func.start_ea),
+            "func_end": hex(func.end_ea),
+            "ok": not lost and not any(item["refs"] for item in forbidden_refs),
+            "reachable_blocks": [hex(ea) for ea in sorted(reachable)],
+            "reachable_count": len(reachable),
+            "total_blocks": len(blocks),
+            "unreachable_blocks": [hex(ea) for ea in unreachable],
+            "expected": {
+                "count": len(expected),
+                "lost": lost,
+                "items": expected_map,
+            },
+            "forbidden_branch_targets": forbidden_refs,
+            "error": None,
+        }
+    except Exception as e:
+        return {
+            "func_ea": func_ea,
+            "ok": False,
+            "error": str(e),
+        }
 
 
 # ============================================================================

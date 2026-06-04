@@ -529,7 +529,7 @@
   },
   {
     "name": "basic_blocks",
-    "description": "Get control flow graph basic blocks for functions",
+    "description": "Get control flow graph basic blocks for functions. Blocks include predecessors, successors, edge summaries, last instruction, instruction count, and xrefs to the block start.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -565,6 +565,39 @@
       "items": {
         "type": "object"
       }
+    }
+  },
+  {
+    "name": "cfg_verify",
+    "description": "Verify CFG reachability and forbidden branch references for a function",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "func_ea": {
+          "type": "string",
+          "description": "Function address to verify"
+        },
+        "expected_blocks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Block starts or addresses that must remain reachable"
+        },
+        "forbidden_branch_targets": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Branch targets that must have no remaining code branch refs"
+        }
+      },
+      "required": [
+        "func_ea"
+      ]
+    },
+    "outputSchema": {
+      "type": "object"
     }
   },
   {
@@ -2105,7 +2138,7 @@
   },
   {
     "name": "py_eval",
-    "description": "Execute Python code in IDA context.\n    Returns dict with result/stdout/stderr.\n    Has access to all IDA API modules.\n    Supports Jupyter-style evaluation.",
+    "description": "Execute Python code in IDA context.\n    Returns dict with result/stdout/stderr.\n    Has access to all IDA API modules.\n    Supports Jupyter-style evaluation without executing multi-line side effects twice.",
     "inputSchema": {
       "type": "object",
       "properties": {

@@ -408,6 +408,11 @@ class BasicBlock(TypedDict):
     type: int
     successors: list[str]
     predecessors: list[str]
+    successor_edges: NotRequired[list[dict]]
+    predecessor_edges: NotRequired[list[dict]]
+    last_instruction: NotRequired[dict | None]
+    instruction_count: NotRequired[int]
+    xrefs_to_start: NotRequired[list[dict]]
 
 
 T = TypeVar("T")
